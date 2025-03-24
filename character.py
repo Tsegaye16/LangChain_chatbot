@@ -87,3 +87,4 @@ class CharacterManager:
         """Retrieve information from character's long-term memory"""
         character_id = self.db.save_character_state(character_name, CharacterState())
         return self.db.get_from_memory(character_id, key)
+    

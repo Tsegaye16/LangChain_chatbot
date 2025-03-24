@@ -84,7 +84,7 @@ class DatabaseManager:
                     UNIQUE (character_id, key)  -- Add unique constraint
                         )
                     """)
-            
+                
             
                 self.conn.commit()
         except Exception as e:
@@ -152,7 +152,10 @@ class DatabaseManager:
             raise
 
     def create_conversation(self, character_id, user_id):
-        """Create a new conversation record"""
+        """Return 'anonymous' for invalid user IDs"""
+        if not user_id or user_id == "anonymous":
+            return "anonymous"
+            
         try:
             with self.conn.cursor() as cur:
                 cur.execute("""
@@ -167,15 +170,19 @@ class DatabaseManager:
             self.conn.rollback()
             st.error(f"Failed to create conversation: {e}")
             raise
-
     def save_message(self, conversation_id, role, content):
-        """Save a message to the database"""
+        """Save message with proper role identification"""
+        if not conversation_id or conversation_id == "anonymous":
+            return
+            
         try:
             with self.conn.cursor() as cur:
+                # Convert role to lowercase for consistency
+                normalized_role = role.lower()
                 cur.execute("""
                     INSERT INTO messages (conversation_id, role, content)
                     VALUES (%s, %s, %s)
-                """, (conversation_id, role, content))
+                """, (conversation_id, normalized_role, content))
                 self.conn.commit()
         except Exception as e:
             self.conn.rollback()
