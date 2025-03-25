@@ -240,6 +240,24 @@ class DatabaseManager:
             st.error(f"Failed to save to memory: {e}")
             raise
 
+    def search_conversations_for_mentions(self, character_id, search_term):
+        """Search all messages for mentions of a specific term"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT m.content, m.role, m.timestamp
+                    FROM messages m
+                    JOIN conversations c ON m.conversation_id = c.conversation_id
+                    WHERE c.character_id = %s 
+                    AND m.content ILIKE %s
+                    ORDER BY m.timestamp DESC
+                    LIMIT 5
+                """, (character_id, f'%{search_term}%'))
+                return cur.fetchall()
+        except Exception as e:
+            st.error(f"Failed to search conversations: {e}")
+            return []
+
     def get_from_memory(self, character_id, key):
         """Retrieve information from character's long-term memory"""
         try:
