@@ -67,16 +67,28 @@ def main():
     # PDF processing
     with st.sidebar:
         st.title("Menu:")
-        pdf_docs = st.file_uploader("Upload PDF Files", accept_multiple_files=True)
-        
-        if st.button("Submit & Process") and pdf_docs:
+        input_tab1, input_tab2 = st.tabs(["Upload PDF", "Paste Text"])
+        with input_tab1:
+            pdf_docs = st.file_uploader("Upload PDF Files", accept_multiple_files=True)
+            
+            if st.button("Submit & Process") and pdf_docs:
+                with st.spinner("Processing..."):
+                    raw_text = pdf_processor.get_pdf_text(pdf_docs)
+                    text_chunks = pdf_processor.get_text_chunks(raw_text)
+                    pdf_processor.create_vector_store(text_chunks)
+                    characters = pdf_processor.extract_characters(raw_text)
+                    st.session_state['characters'] = characters
+                    st.success("Processing complete!")
+    with input_tab2:
+        history_text = st.text_area("Paste history text here:", height=300,key="history_text")
+        if st.button("Process Text") and history_text:
             with st.spinner("Processing..."):
-                raw_text = pdf_processor.get_pdf_text(pdf_docs)
-                text_chunks = pdf_processor.get_text_chunks(raw_text)
-                pdf_processor.create_vector_store(text_chunks)
-                characters = pdf_processor.extract_characters(raw_text)
-                st.session_state['characters'] = characters
-                st.success("Processing complete!")
+                characters = pdf_processor.process_input(history_text)
+                if not characters:
+                    st.warning("No identfiable characters found in the text. Please provide a longer narrative content")
+                else:
+                    st.session_state['characters'] = characters
+                    st.success("Text processing complete!")
 
     # Chat interface
     if 'characters' in st.session_state:
@@ -127,7 +139,8 @@ def main():
                 # Update emotional state display
                 with emotion_container:
                     st.write(f"### {character_name}'s Emotional State")
-                    updated_state.display_emotions()
+                    latest_state = character_manager.get_character_state(character_name)
+                    latest_state.display_emotions()
                 
                 st.rerun()
 

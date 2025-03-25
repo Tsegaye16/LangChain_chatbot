@@ -1,5 +1,5 @@
-# chat.py (updated)
 from character_state import CharacterState
+from database import DatabaseManager
 from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -9,6 +9,8 @@ import streamlit as st
 
 class ChatManager:
     def __init__(self):
+        self.db = DatabaseManager()  # Initialize DatabaseManager
+        self.character_manager = CharacterManager()  # Initialize CharacterManager
         self.character_manager = CharacterManager()
         self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         
@@ -25,7 +27,7 @@ class ChatManager:
         prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
         return load_qa_chain(model, chain_type="stuff", prompt=prompt)
     
-    def process_user_input(self, user_question, character_name, user_id):
+    def process_user_input(self, prompt, character_name, user_id):
         """Process input and return (response, updated_character_state)"""
         # Get current character state
         character_state = self.character_manager.get_character_state(character_name)
@@ -33,11 +35,11 @@ class ChatManager:
         # Generate response
         try:
             new_db = FAISS.load_local("faiss_index", self.embeddings, allow_dangerous_deserialization=True)
-            docs = new_db.similarity_search(user_question)
+            docs = new_db.similarity_search(prompt)
             
             chain = self.get_conversational_chain(character_name)
             response = chain(
-                {"input_documents": docs, "question": user_question},
+                {"input_documents": docs, "question": prompt},
                 return_only_outputs=True
             )
             response_text = response["output_text"]
@@ -46,16 +48,21 @@ class ChatManager:
         
         # Update emotional state
         updated_state = self.character_manager.simulate_emotions(
-            user_question, character_name, character_state
+            prompt, character_name, character_state
         )
+        
+        # Save the updated character state to database
+        self.character_manager.save_character_state(character_name, updated_state)
         
         # Save conversation if authenticated
         if user_id != "anonymous":
-            self._save_conversation(character_name, user_id, user_question, response_text)
-        
+            character_id = self.db.save_character_state(character_name, updated_state)
+            conversation_id = self.db.create_conversation(character_id, user_id)
+            self.db.save_message(conversation_id, "user", prompt)
+            self.db.save_message(conversation_id, "assistant", response_text)
         
         return response_text, updated_state
-    
+
     def _save_conversation(self, character_name, user_id, question, response):
         """Save conversation to database for authenticated users"""
         character_id = self.character_manager.db.save_character_state(character_name, CharacterState())
