@@ -1,0 +1,22 @@
+# Core requirements
+streamlit==1.32.0
+langchain==0.1.13
+langchain-google-genai==0.0.11
+google-generativeai==0.3.2
+
+# PDF processing
+PyPDF2==3.0.1
+
+# Vector database
+faiss-cpu==1.7.4
+
+# Database
+psycopg2-binary==2.9.9
+
+# Environment management
+python-dotenv==1.0.1
+
+# Additional utilities
+numpy==1.26.4
+pandas==2.2.1
+typing-extensions==4.10.0

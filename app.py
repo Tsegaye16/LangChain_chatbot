@@ -1,8 +1,15 @@
+import json
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain.vectorstores import FAISS
+import os
+from typing import Union, List, Optional
+import re
 import streamlit as st
 from pdf_processor import PDFProcessor
 from chat import ChatManager
 from character import CharacterManager
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,7 +44,6 @@ def main():
 
     # Initialize managers
     pdf_processor = PDFProcessor()
-    chat_manager = ChatManager()
     character_manager = CharacterManager()
 
     # Initialize session state
@@ -46,6 +52,7 @@ def main():
         st.session_state.temp_messages = {}  # Changed to dictionary
         st.session_state.authenticated = False
         st.session_state.emotion_updates = 0
+        st.session_state.book_source = None  # add book_source
 
     # User ID handling
     if not st.session_state.authenticated:
@@ -70,42 +77,51 @@ def main():
         input_tab1, input_tab2 = st.tabs(["Upload PDF", "Paste Text"])
         with input_tab1:
             pdf_docs = st.file_uploader("Upload PDF Files", accept_multiple_files=True)
-            
-            if st.button("Submit & Process") and pdf_docs:
+            book_source = st.text_input("Enter Book Source (e.g., Book Title):")  # add book source input.
+            if st.button("Submit & Process") and pdf_docs and book_source:
                 with st.spinner("Processing..."):
                     raw_text = pdf_processor.get_pdf_text(pdf_docs)
                     text_chunks = pdf_processor.get_text_chunks(raw_text)
                     pdf_processor.create_vector_store(text_chunks)
                     characters = pdf_processor.extract_characters(raw_text)
                     st.session_state['characters'] = characters
+                    st.session_state.book_source = book_source  # save book source
                     st.success("Processing complete!")
-    with input_tab2:
-        history_text = st.text_area("Paste history text here:", height=300,key="history_text")
-        if st.button("Process Text") and history_text:
-            with st.spinner("Processing..."):
-                characters = pdf_processor.process_input(history_text)
-                if not characters:
-                    st.warning("No identfiable characters found in the text. Please provide a longer narrative content")
-                else:
-                    st.session_state['characters'] = characters
-                    st.success("Text processing complete!")
+
+        with input_tab2:
+            history_text = st.text_area("Paste history text here:", height=300, key="history_text")
+            book_source_text = st.text_input("Enter Text Source (e.g., Book Title):", key="text_source")  # add book source for text.
+            if st.button("Process Text") and history_text and book_source_text:
+                with st.spinner("Processing..."):
+                    characters = pdf_processor.process_input(history_text)
+                    if not characters:
+                        st.warning("No identifiable characters found in the text. Please provide a longer narrative content")
+                    else:
+                        st.session_state['characters'] = characters
+                        st.session_state.book_source = book_source_text  # save book source for text.
+                        st.success("Text processing complete!")
 
     # Chat interface
-    if 'characters' in st.session_state:
+    if 'characters' in st.session_state and st.session_state.book_source:  # check if source is available.
         character_name = st.selectbox("Choose a Character:", st.session_state['characters'])
-        
+
         # Initialize character-specific messages if not exists
         if character_name not in st.session_state.temp_messages:
             st.session_state.temp_messages[character_name] = []
-        
+
         # Create container for emotional state
         emotion_container = st.sidebar.container()
-        
+
         # Display initial emotional state
-        character_state = character_manager.get_character_state(character_name)
+        character_state, character_id = character_manager.get_character_state(character_name, st.session_state.book_source,st.session_state.user_id)  # Get state and id.
+
+        # Display initial emotional state
         with emotion_container:
             st.write(f"### {character_name}'s Emotional State")
             character_state.display_emotions()
+
+        # Initialize chat_manager with book source
+        chat_manager = ChatManager(st.session_state.book_source)
 
         # Display chat history
         if st.session_state.user_id != "anonymous":
@@ -113,11 +129,11 @@ def main():
         else:
             for msg in st.session_state.temp_messages[character_name]:
                 if msg['role'] == 'user':
-                    st.markdown(f'<div class="user"><strong>👤 You:</strong> {msg["content"]}</div>', 
-                               unsafe_allow_html=True)
+                    st.markdown(f'<div class="user"><strong>👤 You:</strong> {msg["content"]}</div>',
+                                unsafe_allow_html=True)
                 else:
-                    st.markdown(f'<div class="bot"><strong>🤖 {character_name}:</strong> {msg["content"]}</div>', 
-                               unsafe_allow_html=True)
+                    st.markdown(f'<div class="bot"><strong>🤖 {character_name}:</strong> {msg["content"]}</div>',
+                                unsafe_allow_html=True)
 
         # Handle chat input
         if prompt := st.chat_input(f"Ask {character_name}..."):
@@ -127,21 +143,25 @@ def main():
                     character_name,
                     st.session_state.user_id
                 )
-                
+
                 if st.session_state.user_id == "anonymous":
                     st.session_state.temp_messages[character_name].append({'role': 'user', 'content': prompt})
                     st.session_state.temp_messages[character_name].append({'role': 'assistant', 'content': response})
-                
+
                 # Display the messages
                 st.chat_message("user").write(prompt)
                 st.chat_message("assistant").write(response)
-                
+
                 # Update emotional state display
                 with emotion_container:
                     st.write(f"### {character_name}'s Emotional State")
-                    latest_state = character_manager.get_character_state(character_name)
+                    latest_state, character_id = character_manager.get_character_state(character_name, st.session_state.book_source,st.session_state.user_id)
                     latest_state.display_emotions()
-                
+
+                # Only save character states if user is not anonymous.
+                if st.session_state.user_id != "anonymous":
+                    character_manager.save_character_state(character_name, latest_state, st.session_state.book_source, st.session_state.user_id) #Use session state user id
+
                 st.rerun()
 
 if __name__ == "__main__":

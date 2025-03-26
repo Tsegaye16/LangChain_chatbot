@@ -8,76 +8,121 @@ from character import CharacterManager
 import streamlit as st
 
 class ChatManager:
-    def __init__(self):
-        self.db = DatabaseManager()  # Initialize DatabaseManager
-        self.character_manager = CharacterManager()  # Initialize CharacterManager
+    def __init__(self, book_source): 
+        self.db = DatabaseManager()
         self.character_manager = CharacterManager()
         self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        
+        self.name_extraction_model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
+        self.book_source = book_source 
+
     def get_conversational_chain(self, character_name):
         prompt_template = f"""
-        You are {character_name}, a character from a book. Respond naturally to the question while staying in character.
-        Be conversational and maintain your personality traits.
+            You are {character_name}, a character from a book. Respond naturally to questions while staying in character.
 
-        Context:\n {{context}}?\n
-        Question: \n{{question}}\n
-        Answer:
+            When asked about someone (like "Tell me about someone"), summarize what you've learned about them from the [Conversation History]. 
+            Include details like their general behavior or any relevant information gleaned from previous interactions, but DO NOT reveal any personally identifiable information (PII) such as specific addresses, phone numbers, email addresses, or ages. 
+            If there are no mentions in the [Conversation History], state that you don't have enough information to provide a summary.
+            If there are mentions in the [Book Context] and not in the [Conversation History], use the book context to provide general information, excluding PII.
+
+            [Book Context]:
+            {{context}}
+
+            [Conversation History]:
+            {{history}}
+
+            Current Question:
+            {{question}}
+
+            Answer:
         """
         model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
-        prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
-        return load_qa_chain(model, chain_type="stuff", prompt=prompt)
-    
+        prompt = PromptTemplate(
+            template=prompt_template,
+            input_variables=["context", "question", "history"]
+        )
+        return load_qa_chain(
+            model,
+            chain_type="stuff",
+            prompt=prompt,
+            document_variable_name="context"
+        )
+
     def process_user_input(self, prompt, character_name, user_id):
-        """Process input and return (response, updated_character_state)"""
-        # Get current character state
-        character_state = self.character_manager.get_character_state(character_name)
-        
-        # Generate response
+        character_state, character_id = self.character_manager.get_character_state(character_name, self.book_source, user_id)
+
+        if character_id is None and user_id != "anonymous": # only save if user is not anonymous.
+            character_id = self.db.save_character_state(character_name, character_state, self.book_source)
+
+        history_context = ""
+        if "tell me about" in prompt.lower() or "you know" in prompt.lower() or "describe" in prompt.lower() or "who is" in prompt.lower():
+            name_to_check = self._extract_name_from_question_using_llm(prompt)
+            if name_to_check:
+                print(f"Searching for mentions of: {name_to_check}")
+                all_conversations = self.db.search_conversations_for_mentions(character_id, name_to_check)
+
+                relevant_mentions = [
+                    (content, role, timestamp) for content, role, timestamp in all_conversations
+                    if name_to_check.lower() in content.lower() and "did you know" not in content.lower()
+                ]
+
+                if relevant_mentions:
+                    history_context = f"Previous mentions of {name_to_check}:\n"
+                    for content, role, timestamp in relevant_mentions:
+                        history_context += f"- {role} said: '{content}'\n"
+                    print(f"History context built: {history_context}")
+                else:
+                    print("No relevant mentions found.")
+
         try:
             new_db = FAISS.load_local("faiss_index", self.embeddings, allow_dangerous_deserialization=True)
             docs = new_db.similarity_search(prompt)
-            
+
             chain = self.get_conversational_chain(character_name)
-            response = chain(
-                {"input_documents": docs, "question": prompt},
+            response = chain.invoke(
+                {
+                    "input_documents": docs,
+                    "question": prompt,
+                    "history": history_context
+                },
                 return_only_outputs=True
             )
             response_text = response["output_text"]
         except Exception as e:
-            response_text = "I can't process that right now."
-        
-        # Update emotional state
+            response_text = f"I can't process that right now. Error: {str(e)}"
+
         updated_state = self.character_manager.simulate_emotions(
-            prompt, character_name, character_state
+            prompt, character_name, character_state, self.book_source, user_id # add user id here.
         )
         
-        # Save the updated character state to database
-        self.character_manager.save_character_state(character_name, updated_state)
-        
-        # Save conversation if authenticated
+        # Correctly conditional save here
         if user_id != "anonymous":
-            character_id = self.db.save_character_state(character_name, updated_state)
+            self.character_manager.save_character_state(character_name, updated_state, self.book_source, user_id) # add user id here.
             conversation_id = self.db.create_conversation(character_id, user_id)
             self.db.save_message(conversation_id, "user", prompt)
             self.db.save_message(conversation_id, "assistant", response_text)
-        
+
         return response_text, updated_state
 
-    def _save_conversation(self, character_name, user_id, question, response):
-        """Save conversation to database for authenticated users"""
-        character_id = self.character_manager.db.save_character_state(character_name, CharacterState())
-        conversation_id = self.character_manager.db.create_conversation(character_id, user_id)
-        self.character_manager.db.save_message(conversation_id, "user", question)
-        self.character_manager.db.save_message(conversation_id, "assistant", response)
-    
+    def _extract_name_from_question_using_llm(self, question):
+        prompt = f"""
+            Extract the full name of the person mentioned in the following question. If no name is mentioned, return 'None'.
+
+            Question: {question}
+
+            Name:
+        """
+        response = self.name_extraction_model.invoke(prompt)
+
+        name = response.content.strip().strip(" .")
+        return name if name != 'None' else None
+
     def display_chat_history(self, character_name, user_id):
-        """Display chat history with proper message roles and timestamps"""
         if user_id == "anonymous":
             return
-            
-        character_id = self.character_manager.db.save_character_state(character_name, CharacterState())
+
+        character_state, character_id = self.character_manager.db.get_character_state(character_name, self.book_source, user_id)
         history = self.character_manager.db.get_conversation_history(character_id, user_id)
-        
+
         for message in history:
             timestamp = message.get("timestamp", "").strftime("%H:%M") if message.get("timestamp") else ""
             if message["role"].lower() == "user":
@@ -93,5 +138,4 @@ class ChatManager:
                         <strong>🤖 {character_name}:</strong> {message["content"]}
                         <div class="timestamp">{timestamp}</div>
                     </div>
-                ''', unsafe_allow_html=True)  
-                
+                ''', unsafe_allow_html=True)
