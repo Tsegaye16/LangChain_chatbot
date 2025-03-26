@@ -1,6 +1,6 @@
 from database import DatabaseManager
 from character_state import CharacterState
-from langchain_google_genai import ChatGoogleGenerativeAI  # Add this import
+from langchain_google_genai import ChatGoogleGenerativeAI
 import streamlit as st
 import random
 import json
@@ -9,19 +9,19 @@ class CharacterManager:
     def __init__(self):
         self.db = DatabaseManager()
         
-    def get_character_state(self, character_name):
+    def get_character_state(self, character_name, book_source, user_id):
         """Get character state from database or create new one"""
-        state = self.db.get_character_state(character_name)
+        state, character_id = self.db.get_character_state(character_name, book_source,user_id)
         if state is None:
             state = CharacterState()
-            self.save_character_state(character_name, state)
-        return state
+            character_id = self.save_character_state(character_name, state, book_source,user_id)
+        return state, character_id
     
-    def save_character_state(self, character_name, state):
+    def save_character_state(self, character_name, state, book_source, user_id):
         """Save character state to database"""
-        self.db.save_character_state(character_name, state)
+        return self.db.save_character_state(character_name, state, book_source, user_id)
         
-    def simulate_emotions(self, user_input, character_name, character_state):
+    def simulate_emotions(self, user_input, character_name, character_state, book_source, user_id):
         """Simulate emotional response to user input using LLM for emotion mapping."""
         model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.7)
         prompt = f"""
@@ -62,52 +62,47 @@ class CharacterManager:
 
         try:
             response = model.invoke(prompt)
-            print(f"LLM Response: {response.content}")  # Print for debugging.
+            print(f"LLM Response: {response.content}")
 
-            # Remove markdown code block markers
             json_string = response.content.strip()
             if json_string.startswith("```json"):
-                json_string = json_string[7:]  # Remove "```json"
+                json_string = json_string[7:]
             if json_string.endswith("```"):
-                json_string = json_string[:-3]  # Remove "```"
+                json_string = json_string[:-3]
 
-            if json_string and json_string.strip():  # Check that the response is not empty.
+            if json_string and json_string.strip():
                 emotion_data = json.loads(json_string)
                 character_state.update_emotions(emotion_data)
-                self.save_character_state(character_name, character_state)
+                self.save_character_state(character_name, character_state, book_source, user_id)
             else:
                 raise ValueError("LLM returned an empty or invalid response.")
 
         except (json.JSONDecodeError, AttributeError, ValueError) as e:
-            # Handle invalid LLM response
             print(f"Error processing LLM response: {e}")
-            # Fallback to random adjustment or a default state
             character_state.arousal = max(0.0, min(1.0, character_state.arousal + random.uniform(-0.1, 0.1)))
             character_state.valence = max(0.0, min(1.0, character_state.valence + random.uniform(-0.1, 0.1)))
-            # ... (adjust other emotions)
-            self.save_character_state(character_name, character_state)
+            self.save_character_state(character_name, character_state, book_source, user_id)
 
         return character_state
 
-    def get_conversation_history(self, character_name, user_id=None, limit=20):
+    def get_conversation_history(self, character_name, book_source, user_id=None, limit=20):
         """Get conversation history for a character"""
-        character_id = self.db.save_character_state(character_name, CharacterState())  # Ensures character exists
+        state, character_id = self.get_character_state(character_name, book_source, user_id)
         return self.db.get_conversation_history(character_id, user_id, limit)
     
-    def save_conversation(self, character_name, user_id, messages):
+    def save_conversation(self, character_name, book_source, user_id, messages):
         """Save a conversation to the database"""
-        character_id = self.db.save_character_state(character_name, CharacterState())
+        state, character_id = self.get_character_state(character_name, book_source, user_id)
         conversation_id = self.db.create_conversation(character_id, user_id)
         for message in messages:
             self.db.save_message(conversation_id, message["role"], message["content"])
     
-    def save_to_memory(self, character_name, key, value):
+    def save_to_memory(self, character_name, book_source, key, value, user_id):
         """Save information to character's long-term memory"""
-        character_id = self.db.save_character_state(character_name, CharacterState())
+        state, character_id = self.get_character_state(character_name, book_source, user_id)
         self.db.save_to_memory(character_id, key, value)
     
-    def get_from_memory(self, character_name, key):
+    def get_from_memory(self, character_name, book_source, key, user_id):
         """Retrieve information from character's long-term memory"""
-        character_id = self.db.save_character_state(character_name, CharacterState())
+        state, character_id = self.get_character_state(character_name, book_source, user_id)
         return self.db.get_from_memory(character_id, key)
-    

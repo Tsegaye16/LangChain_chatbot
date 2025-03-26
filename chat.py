@@ -8,18 +8,19 @@ from character import CharacterManager
 import streamlit as st
 
 class ChatManager:
-    def __init__(self):
+    def __init__(self, book_source): 
         self.db = DatabaseManager()
         self.character_manager = CharacterManager()
         self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
         self.name_extraction_model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
+        self.book_source = book_source 
 
     def get_conversational_chain(self, character_name):
         prompt_template = f"""
             You are {character_name}, a character from a book. Respond naturally to questions while staying in character.
 
             When asked about someone (like "Tell me about someone"), summarize what you've learned about them from the [Conversation History]. 
-            Include details like their general behavior or any relevant information gleaned from previous interactions, but DO NOT reveal any personally identifiable information (PII) such as  specific addresses, phone numbers, email addresses, or ages. 
+            Include details like their general behavior or any relevant information gleaned from previous interactions, but DO NOT reveal any personally identifiable information (PII) such as specific addresses, phone numbers, email addresses, or ages. 
             If there are no mentions in the [Conversation History], state that you don't have enough information to provide a summary.
             If there are mentions in the [Book Context] and not in the [Conversation History], use the book context to provide general information, excluding PII.
 
@@ -33,7 +34,7 @@ class ChatManager:
             {{question}}
 
             Answer:
-            """
+        """
         model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
         prompt = PromptTemplate(
             template=prompt_template,
@@ -47,8 +48,10 @@ class ChatManager:
         )
 
     def process_user_input(self, prompt, character_name, user_id):
-        character_state = self.character_manager.get_character_state(character_name)
-        character_id = self.db.save_character_state(character_name, character_state)
+        character_state, character_id = self.character_manager.get_character_state(character_name, self.book_source, user_id)
+
+        if character_id is None and user_id != "anonymous": # only save if user is not anonymous.
+            character_id = self.db.save_character_state(character_name, character_state, self.book_source)
 
         history_context = ""
         if "tell me about" in prompt.lower() or "you know" in prompt.lower() or "describe" in prompt.lower() or "who is" in prompt.lower():
@@ -88,11 +91,12 @@ class ChatManager:
             response_text = f"I can't process that right now. Error: {str(e)}"
 
         updated_state = self.character_manager.simulate_emotions(
-            prompt, character_name, character_state
+            prompt, character_name, character_state, self.book_source, user_id # add user id here.
         )
-        self.character_manager.save_character_state(character_name, updated_state)
-
+        
+        # Correctly conditional save here
         if user_id != "anonymous":
+            self.character_manager.save_character_state(character_name, updated_state, self.book_source, user_id) # add user id here.
             conversation_id = self.db.create_conversation(character_id, user_id)
             self.db.save_message(conversation_id, "user", prompt)
             self.db.save_message(conversation_id, "assistant", response_text)
@@ -101,15 +105,14 @@ class ChatManager:
 
     def _extract_name_from_question_using_llm(self, question):
         prompt = f"""
-        Extract the full name of the person mentioned in the following question. If no name is mentioned, return 'None'.
+            Extract the full name of the person mentioned in the following question. If no name is mentioned, return 'None'.
 
-        Question: {question}
+            Question: {question}
 
-        Name:
+            Name:
         """
         response = self.name_extraction_model.invoke(prompt)
 
-        # Assuming the response has a 'content' attribute containing the text
         name = response.content.strip().strip(" .")
         return name if name != 'None' else None
 
@@ -117,7 +120,7 @@ class ChatManager:
         if user_id == "anonymous":
             return
 
-        character_id = self.character_manager.db.save_character_state(character_name, CharacterState())
+        character_state, character_id = self.character_manager.db.get_character_state(character_name, self.book_source, user_id)
         history = self.character_manager.db.get_conversation_history(character_id, user_id)
 
         for message in history:
@@ -136,4 +139,3 @@ class ChatManager:
                         <div class="timestamp">{timestamp}</div>
                     </div>
                 ''', unsafe_allow_html=True)
-
