@@ -8,14 +8,40 @@ from character import CharacterManager
 import streamlit as st
 
 class ChatManager:
-    def __init__(self, book_source): 
-        self.db = DatabaseManager()
-        self.character_manager = CharacterManager()
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        self.name_extraction_model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
-        self.book_source = book_source 
+    """
+    Core chat management system that handles:
+    - Conversational chains with book characters
+    - Processing user inputs and generating responses
+    - Maintaining conversation history
+    - Protecting personally identifiable information (PII)
+    """
+    
+    def __init__(self, book_source):
+        """
+        Initialize chat manager with required components
+        
+        Args:
+            book_source (str): Identifier for the source material being used
+        """
+        self.db = DatabaseManager()  # Database operations handler
+        self.character_manager = CharacterManager()  # Character state manager
+        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")  # Text embeddings
+        self.name_extraction_model = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)  # Name extraction LLM
+        self.book_source = book_source  # Current book/context identifier
 
     def get_conversational_chain(self, character_name):
+        """
+        Creates a configured QA chain for character conversations with:
+        - Character persona enforcement
+        - Conversation history awareness
+        - PII protection safeguards
+        
+        Args:
+            character_name (str): Name of character to roleplay
+            
+        Returns:
+            QA Chain: Configured conversation chain
+        """
         prompt_template = f"""
             You are {character_name}, a character from a book. Respond naturally to questions while staying in character.
 
@@ -48,21 +74,56 @@ class ChatManager:
         )
 
     def process_user_input(self, prompt, character_name, user_id):
-        character_state, character_id = self.character_manager.get_character_state(character_name, self.book_source, user_id)
+        """
+        Processes user input through the full conversation pipeline:
+        1. Retrieves character state
+        2. Checks for name references in history
+        3. Generates context-aware response
+        4. Updates character emotions
+        5. Persists data for logged-in users
+        
+        Args:
+            prompt (str): User's input message
+            character_name (str): Character being conversed with
+            user_id (str): User identifier ("anonymous" for temporary sessions)
+            
+        Returns:
+            tuple: (response_text, updated_character_state)
+        """
+        # Retrieve or initialize character state
+        character_state, character_id = self.character_manager.get_character_state(
+            character_name, 
+            self.book_source, 
+            user_id
+        )
 
-        if character_id is None and user_id != "anonymous": # only save if user is not anonymous.
-            character_id = self.db.save_character_state(character_name, character_state, self.book_source)
+        # Only create new database records for authenticated users
+        if character_id is None and user_id != "anonymous":
+            character_id = self.db.save_character_state(
+                character_name, 
+                character_state, 
+                self.book_source
+            )
 
+        # Check for name references in query
         history_context = ""
-        if "tell me about" in prompt.lower() or "you know" in prompt.lower() or "describe" in prompt.lower() or "who is" in prompt.lower():
+        name_query_phrases = ["tell me about", "you know", "describe", "who is"]
+        if any(phrase in prompt.lower() for phrase in name_query_phrases):
             name_to_check = self._extract_name_from_question_using_llm(prompt)
             if name_to_check:
                 print(f"Searching for mentions of: {name_to_check}")
-                all_conversations = self.db.search_conversations_for_mentions(character_id, name_to_check)
+                # Retrieve relevant conversation history
+                all_conversations = self.db.search_conversations_for_mentions(
+                    character_id, 
+                    name_to_check
+                )
 
+                # Filter out meta-queries about knowledge
                 relevant_mentions = [
-                    (content, role, timestamp) for content, role, timestamp in all_conversations
-                    if name_to_check.lower() in content.lower() and "did you know" not in content.lower()
+                    (content, role, timestamp) 
+                    for content, role, timestamp in all_conversations
+                    if (name_to_check.lower() in content.lower() and 
+                        "did you know" not in content.lower())
                 ]
 
                 if relevant_mentions:
@@ -74,6 +135,7 @@ class ChatManager:
                     print("No relevant mentions found.")
 
         try:
+            # Load document embeddings and generate response
             new_db = FAISS.load_local("faiss_index", self.embeddings, allow_dangerous_deserialization=True)
             docs = new_db.similarity_search(prompt)
 
@@ -90,13 +152,23 @@ class ChatManager:
         except Exception as e:
             response_text = f"I can't process that right now. Error: {str(e)}"
 
+        # Update character's emotional state
         updated_state = self.character_manager.simulate_emotions(
-            prompt, character_name, character_state, self.book_source, user_id # add user id here.
+            prompt, 
+            character_name, 
+            character_state, 
+            self.book_source, 
+            user_id
         )
         
-        # Correctly conditional save here
+        # Persist data only for authenticated users
         if user_id != "anonymous":
-            self.character_manager.save_character_state(character_name, updated_state, self.book_source, user_id) # add user id here.
+            self.character_manager.save_character_state(
+                character_name, 
+                updated_state, 
+                self.book_source, 
+                user_id
+            )
             conversation_id = self.db.create_conversation(character_id, user_id)
             self.db.save_message(conversation_id, "user", prompt)
             self.db.save_message(conversation_id, "assistant", response_text)
@@ -104,8 +176,18 @@ class ChatManager:
         return response_text, updated_state
 
     def _extract_name_from_question_using_llm(self, question):
+        """
+        Helper method to extract names from user questions using LLM
+        
+        Args:
+            question (str): User's input containing potential name reference
+            
+        Returns:
+            str: Extracted name or None if not found
+        """
         prompt = f"""
-            Extract the full name of the person mentioned in the following question. If no name is mentioned, return 'None'.
+            Extract the full name of the person mentioned in the following question. 
+            If no name is mentioned, return 'None'.
 
             Question: {question}
 
@@ -117,12 +199,25 @@ class ChatManager:
         return name if name != 'None' else None
 
     def display_chat_history(self, character_name, user_id):
+        """
+        Renders conversation history in Streamlit UI
+        Skips rendering for anonymous users
+        
+        Args:
+            character_name (str): Character being conversed with
+            user_id (str): User identifier
+        """
         if user_id == "anonymous":
             return
 
-        character_state, character_id = self.character_manager.db.get_character_state(character_name, self.book_source, user_id)
+        character_state, character_id = self.character_manager.db.get_character_state(
+            character_name, 
+            self.book_source, 
+            user_id
+        )
         history = self.character_manager.db.get_conversation_history(character_id, user_id)
 
+        # Format and display each message
         for message in history:
             timestamp = message.get("timestamp", "").strftime("%H:%M") if message.get("timestamp") else ""
             if message["role"].lower() == "user":
