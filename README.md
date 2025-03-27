@@ -1,10 +1,11 @@
 # **Character Chatbot - Interactive Book Character Conversations**
 
 <div style="display: flex; justify-content: space-between;">
-  <img src="images/photo_2025-03-26_15-41-17.jpg" alt="Trend" width="45%" />
-  <img src="images/photo_2025-03-26_15-41-43.jpg" alt="Seazonal" width="45%" />
+  <img src="app/images/photo_2025-03-26_15-41-17.jpg" alt="" width="45%" />
+  <img src="app/images/photo_2025-03-26_15-41-43.jpg" alt="" width="45%" />
 
 </div>
+
 **A Streamlit-based AI chatbot that lets you chat with characters from books, powered by Google Gemini AI.**
 
 ---
@@ -81,20 +82,20 @@ Built with:
    DB_PORT=your DB port
    ```
 
-3. Build and start containers
+3. **Build and start containers**
 
 ```bash
 docker-compose up --build
 ```
 
-4. Access the application
+4. **Access the application**
    open you browser at
 
 ```bash
 http://localhost:8501
 ```
 
-5. stop the application
+5. **stop the application**
 
 ```bash
 docker-compose down
@@ -122,28 +123,28 @@ docker-compose down
    - Go to the sidebar and upload a book (PDF) or paste text.
    - Enter the book title (for reference).
 
-   ![Upload Interface](images/upload.jpg)
+   ![Upload Interface](app/images/upload.jpg)
 
 2. **Select a character**
 
    - The system extracts characters automatically.
    - Choose one from the dropdown.
 
-   ![Character Selection](images/character.jpg)
+   ![Character Selection](app/images/character.jpg)
 
 3. **Start chatting!**
 
    - Ask questions, and the character responds in-character.
    - Emotional state updates in real-time.
 
-   ![Chat Example](images/start_chatting.jpg)
+   ![Chat Example](app/images/start_chatting.jpg)
 
 4. **Login (optional)**
 
    - Enter a **User ID** or whatever they need to save conversations.
    - Leave blank for a temporary session.
 
-   ![User Login](images/login.jpg)
+   ![User Login](app/images/login.jpg)
 
 ---
 
