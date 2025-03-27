@@ -55,11 +55,12 @@ Built with:
 
 ### **Prerequisites**
 
+- Docker (for Docker setup)
 - Python 3.9+
 - Google Gemini API Key ([Get it here](https://ai.google.dev/))
 - `pip` (Python package manager)
 
-### **Steps**
+## Option 1: Run with Docker (Recommended)
 
 1. **Clone the repo**
 
@@ -80,13 +81,34 @@ Built with:
    DB_PORT=your DB port
    ```
 
-3. **Install dependencies**
+3. Build and start containers
+
+```bash
+docker-compose up --build
+```
+
+4. Access the application
+   open you browser at
+
+```bash
+http://localhost:8501
+```
+
+5. stop the application
+
+```bash
+docker-compose down
+```
+
+## Option 2: Local Setup (Without Docker)
+
+1. **Install dependencies**
 
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Run the app**
+2. **Run the app**
    ```bash
    streamlit run app.py
    ```
@@ -129,7 +151,7 @@ Built with:
 
 ```mermaid
 flowchart TB
-    A[User Input] --> B(Streamlit UI)
+    A(Streamlit UI) --> B[User Input]
     B --> C[PDF/Text Processing]
     C --> D[Character Extraction]
     D --> E[FAISS Vector DB]
