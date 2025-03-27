@@ -20,8 +20,8 @@ class DatabaseManager:
                 dbname=os.getenv("DB_NAME", "chatbot_db"),
                 user=os.getenv("DB_USER", "postgres"),
                 password=os.getenv("DB_PASSWORD", "postgres"),
-                host="db",
-                port=5432
+                host=os.getenv("DB_HOST"),
+                port=os.getenv("DB_PORT")
             )
         except Exception as e:
             st.error(f"Database connection failed: {e}")
